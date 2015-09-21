@@ -1,5 +1,5 @@
 module System.IO.Temp (
-    withSystemTempFile, withSystemTempDirectory,
+    withSystemTempFile, withSystemTempDirectory,withCanonicalisedSystemTempDirectory,
     withTempFile, withTempDirectory,
     module Distribution.Compat.TempFile
   ) where
@@ -16,7 +16,6 @@ import Control.Monad.Catch as Exception
 import Control.Monad.IO.Class
 import System.Directory
 import System.IO
-
 import Distribution.Compat.TempFile
 
 
@@ -39,6 +38,18 @@ withSystemTempDirectory :: (MonadIO m, MonadMask m) =>
                         -> (FilePath -> m a) -- ^ Callback that can use the directory
                         -> m a
 withSystemTempDirectory template action = liftIO getTemporaryDirectory >>= \tmpDir -> withTempDirectory tmpDir template action
+
+-- | Create and use a canonicalised temporary directory in the system standard temporary directory.
+--
+-- Behaves exactly the same as 'withTempDirectory', except that the parent temporary directory
+-- will be that returned by 'getTemporaryDirectory'.
+withCanonicalisedSystemTempDirectory :: (MonadIO m, MonadMask m) =>
+                           String   -- ^ Directory name template. See 'openTempFile'.
+                        -> (FilePath -> m a) -- ^ Callback that can use the directory
+                        -> m a
+withCanonicalisedSystemTempDirectory template action = do
+  tmpDir <- liftIO getTemporaryDirectory
+  withTempDirectoryCanonicalised tmpDir template action
 
 
 -- | Use a temporary filename that doesn't already exist.
@@ -79,6 +90,26 @@ withTempDirectory targetDir template =
   Exception.bracket
     (liftIO (createTempDirectory targetDir template))
     (liftIO . ignoringIOErrors . removeDirectoryRecursive)
+
+-- | Create and use a canonicalised temporary directory.
+--
+-- Creates a new temporary directory inside the given directory, making use
+-- of the template. The temp directory is deleted after use. For example:
+--
+-- > withTempDirectoryCanonicalised "src" "sdist." $ \tmpDir -> do ...
+--
+-- The @tmpDir@ will be a new subdirectory of the given directory, e.g.
+-- @src/sdist.342@.
+withTempDirectoryCanonicalised :: (MonadMask m, MonadIO m) =>
+                     FilePath -- ^ Temp directory to create the directory in
+                  -> String   -- ^ Directory name template. See 'openTempFile'.
+                  -> (FilePath -> m a) -- ^ Callback that can use the directory
+                  -> m a
+withTempDirectoryCanonicalised targetDir template action =
+  Exception.bracket
+    (liftIO (createTempDirectory targetDir template))
+    (liftIO . ignoringIOErrors . removeDirectoryRecursive)
+    (\path -> action =<< liftIO (canonicalizePath path))
 
 ignoringIOErrors :: MonadCatch m => m () -> m ()
 ignoringIOErrors ioe = ioe `Exception.catch` (\e -> const (return ()) (e :: IOError))
