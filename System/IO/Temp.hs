@@ -1,6 +1,7 @@
 module System.IO.Temp (
     withSystemTempFile, withSystemTempDirectory,
     withTempFile, withTempDirectory,
+    withTempFileName, withSystemTempFileName,
     module Distribution.Compat.TempFile,
     writeTempFile, writeSystemTempFile
   ) where
@@ -61,6 +62,41 @@ withTempFile tmpDir template action =
     (liftIO (openTempFile tmpDir template))
     (\(name, handle) -> liftIO (hClose handle >> ignoringIOErrors (removeFile name)))
     (uncurry action)
+
+
+
+-- | Find a temporary filename that doesn't already exist, but don't
+--   do anything with it. The supplied action is responsible for
+--   creating/initialising the file. After doing that, it may
+--   pass on the path or handles (via the monadic result),
+--   or immediately delete the file again.
+--   As long as the file has not actually been created, it is not
+--   guaranteed that subsequent use of the actions in this module
+--   will not try to use that same name for other actions.
+-- 
+--   The main purpose of this function is to work with opaque file-creating
+--   libraries, e.g. if you want to generate PDF files with cairo,
+--   but not specify any unsafe file locations.
+withTempFileName :: (MonadIO m, MonadMask m) =>
+                    FilePath -- ^ Temp dir to create the file in
+                 -> String   -- ^ File name template. See 'openTempFile'.
+                 -> (FilePath -> m a) -- ^ Callback that can use the file name.
+                 -> m a
+withTempFileName tmpDir template action = do
+    (filePath,handle) <- liftIO $ openTempFile tmpDir template
+    liftIO $ hClose handle        -- This is a hack. We shouldn't have to
+    liftIO $ removeFile filePath  -- create, then delete, then properly-create the file.
+    action filePath
+
+-- | Like 'withSystemTempFileName', but use the system directory for temporary files.
+withSystemTempFileName :: (MonadIO m, MonadMask m) =>
+                      String   -- ^ File name template. See 'openTempFile'.
+                   -> (FilePath -> m a) -- ^ Callback that can use the file name
+                   -> m a
+withSystemTempFileName template action
+    = liftIO getTemporaryDirectory >>= \tmpDir -> withTempFileName tmpDir template action
+
+
 
 -- | Create and use a temporary directory.
 --
